@@ -1,0 +1,217 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: haproxy-config
+  namespace: iri
+data:
+  haproxy.cfg: |
+    global
+        lua-load /etc/haproxy/random-redirect.lua
+        log stdout format raw local0 debug
+        crt-base /etc/grid-security/certificates
+
+        maxconn     4000
+        user        haproxy
+        group       haproxy
+        #daemon
+
+        stats socket /var/lib/haproxy/stats
+
+    defaults
+        mode                    http
+        log                     global
+        option                  httplog
+        option                  dontlognull
+        option http-server-close
+        option forwardfor       except 127.0.0.0/8
+        option                  redispatch
+        retries                 3
+        timeout http-request    10s
+        timeout queue           1m
+        timeout connect         10s
+        timeout client          1m
+        timeout server          1m
+        timeout http-keep-alive 10s
+        timeout check           10s
+        maxconn                 3000
+
+    listen stats
+        bind :::1024 ssl  crt /etc/ssl/private/cert.pem ssl-min-ver TLSv1.2
+        mode http
+        stats enable
+        stats hide-version
+        stats uri /haproxy_stats
+        stats realm HAProxy\ Statistics
+
+    frontend range1
+        bind 2001:48d0:3001:11a::800:2880 ssl crt /etc/ssl/private/cert.pem
+        mode http
+        option httplog
+
+        http-request set-var(req.backend_name) str(backendrange1)
+        http-request lua.random_redirect
+        http-request redirect location https://%[var(req.target_host)]%[path]%[query] code 307 if { var(req.target_host) -m found }
+
+
+    backend backendrange1
+        mode http
+        option tcp-check
+        server red-xfer7-mv0.unl.edu:1094 red-xfer7-mv0.unl.edu:1094 check ssl verify none
+        server red-xfer8-mv0.unl.edu:1094 red-xfer8-mv0.unl.edu:1094 check ssl verify none
+
+    frontend range2
+      bind 2001:48d0:3001:11a::800:2881 ssl crt /etc/ssl/private/cert.pem
+      mode http
+      option httplog
+      maxconn 100000
+
+      acl choose_srv1 rand(100) lt 50 # ~50%
+      acl choose_srv2 rand(100) ge 50 # ~50%
+
+      http-request redirect location https://red-xfer7-mv1.unl.edu:1094%[path]%[query] code 307 if choose_srv1
+      http-request redirect location https://red-xfer8-mv1.unl.edu:1094%[path]%[query] code 307 if choose_srv2
+
+    frontend range3
+      bind 2001:48d0:3001:11a::800:2882 ssl crt /etc/ssl/private/cert.pem
+      mode http
+      option httplog
+      maxconn 100000
+
+      acl choose_srv1 rand(100) lt 50 # ~50%
+      acl choose_srv2 rand(100) ge 50 # ~50%
+
+      http-request redirect location https://red-xfer7-mv2.unl.edu:1094%[path]%[query] code 307 if choose_srv1
+      http-request redirect location https://red-xfer8-mv2.unl.edu:1094%[path]%[query] code 307 if choose_srv2
+  random-redirect.lua: |
+    core.register_action("random_redirect", { "http-req" }, function(txn)
+        local be_name = txn:get_var("req.backend_name")
+        local backend = core.backends[be_name]
+
+        if not backend then
+            txn:Info("Backend " .. be_name .. " not found!")
+            return
+        end
+
+        local alive = {}
+
+        for name, srv in pairs(backend.servers) do
+            local stats = srv:get_stats()
+            -- Use srv.get_addr will return an IP address.
+            -- This also requires to wrap it in [ ] for IPv6.
+            -- local addr = srv.get_addr and srv:get_addr() or srv.addr
+            -- Because of that, we use srv.get_name which is the server name (same as in the backend)
+            -- In case backend names are not the same as server names, we need use srv:get_addr() to get the IP address.
+            -- and make sure to wrap it in [ ] for IPv6.
+            local addr = srv.get_name and srv:get_name() or nil
+            txn:Debug(string.format("Lua sees server: %s, status: %s", tostring(addr), tostring(stats.status)))
+            if stats.status == "UP" then
+                table.insert(alive, addr)
+            end
+        end
+
+        if #alive > 0 then
+            local pick = alive[math.random(#alive)]
+            txn:set_var("req.target_host", pick)
+        else
+            txn:Info("No backend servers are UP for backend " .. be_name)
+        end
+    end)
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: haproxy-ipv6
+  namespace: iri
+spec:
+  replicas: 1
+  serviceName: haproxy-ipv6
+  selector:
+    matchLabels:
+      app: haproxy-ipv6
+  template:
+    metadata:
+      labels:
+        app: haproxy-ipv6
+      annotations:
+        k8s.v1.cni.cncf.io/networks: '[{"gateway":["2001:48d0:3001:11a::1"],"ips":["2001:48d0:3001:11a::800/64"], "mac": "1a:36:6f:35:5d:90", "name":"multus11a"}]'
+    spec:
+      initContainers:
+        - name: combine-cert-key
+          image: busybox
+          command: ["/bin/sh", "-c"]
+          args:
+            - ls -l /certs/ && cat /certs/cert.pem /certs/privkey.pem > /combined-cert/cert.pem;
+          volumeMounts:
+            - name: cert-sense-nebraska-haproxy
+              mountPath: /certs
+            - name: combined-cert
+              mountPath: /combined-cert
+      tolerations:
+      - effect: NoSchedule
+        key: nautilus.io/reservation
+        operator: Exists
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              - key: kubernetes.io/hostname
+                operator: In
+                values:
+                  - k8s-gen5-01.sdsc.optiputer.net
+                  - k8s-gen5-02.sdsc.optiputer.net
+      containers:
+        - name: haproxy
+          image: haproxy:2.9
+          args: ["-f", "/usr/local/etc/haproxy/haproxy.cfg"]
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "4"
+              memory: "4Gi"
+          volumeMounts:
+            - name: haproxy-config
+              mountPath: /usr/local/etc/haproxy/
+            - name: combined-cert
+              mountPath: /etc/ssl/private
+            - name: lua-scripts
+              mountPath: /etc/haproxy/random-redirect.lua
+              subPath: random-redirect.lua
+          ports:
+            - containerPort: 1024
+              protocol: TCP
+      volumes:
+        - name: haproxy-config
+          configMap:
+            name: haproxy-config
+        - name: cert-sense-nebraska-haproxy
+          secret:
+            defaultMode: 420
+            items:
+            - key: tls.crt
+              path: cert.pem
+            - key: tls.key
+              path: privkey.pem
+            secretName: cert-sense-nebraska-haproxy
+        - name: combined-cert
+          emptyDir: {}
+        - name: lua-scripts
+          configMap:
+            name: haproxy-config
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+    name: cert-sense-nebraska-haproxy
+    namespace: iri
+spec:
+    commonName: sense-nebraska-haproxy.nrp-nautilus.io
+    dnsNames:
+        - sense-nebraska-haproxy.nrp-nautilus.io
+    issuerRef:
+        group: null
+        kind: Issuer
+        name: sense-issuer
+    secretName: cert-sense-nebraska-haproxy
