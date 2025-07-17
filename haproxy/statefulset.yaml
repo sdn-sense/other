@@ -148,9 +148,9 @@ spec:
           image: busybox
           command: ["/bin/sh", "-c"]
           args:
-            - ls -l /certs/ && cat /certs/cert.pem /certs/privkey.pem > /combined-cert/cert.pem;
+            - ls -l /certs/ && cat /certs/hostcert.pem /certs/hostcert.key.pem > /combined-cert/cert.pem;
           volumeMounts:
-            - name: cert-sense-nebraska-haproxy
+            - name: certs-800
               mountPath: /certs
             - name: combined-cert
               mountPath: /combined-cert
@@ -194,32 +194,18 @@ spec:
         - name: haproxy-config
           configMap:
             name: haproxy-config
-        - name: cert-sense-nebraska-haproxy
+        - name: certs-800
           secret:
+            secretName: certs-800
             defaultMode: 420
             items:
-            - key: tls.crt
-              path: cert.pem
-            - key: tls.key
-              path: privkey.pem
-            secretName: cert-sense-nebraska-haproxy
+              - key: hostcert.pem
+                path: hostcert.pem
+              - key: hostcert.key.pem
+                path: hostcert.key.pem
         - name: combined-cert
           emptyDir: {}
         - name: lua-scripts
           configMap:
             name: haproxy-config
----
-apiVersion: cert-manager.io/v1
-kind: Certificate
-metadata:
-    name: cert-sense-nebraska-haproxy
-    namespace: iri
-spec:
-    commonName: sense-nebraska-haproxy.nrp-nautilus.io
-    dnsNames:
-        - sense-nebraska-haproxy.nrp-nautilus.io
-    issuerRef:
-        group: null
-        kind: Issuer
-        name: sense-issuer
-    secretName: cert-sense-nebraska-haproxy
+
