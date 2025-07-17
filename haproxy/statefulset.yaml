@@ -52,36 +52,44 @@ data:
         http-request lua.random_redirect
         http-request redirect location https://%[var(req.target_host)]%[path]%[query] code 307 if { var(req.target_host) -m found }
 
-
     backend backendrange1
         mode http
         option tcp-check
         server red-xfer7-mv0.unl.edu:1094 red-xfer7-mv0.unl.edu:1094 check ssl verify none
         server red-xfer8-mv0.unl.edu:1094 red-xfer8-mv0.unl.edu:1094 check ssl verify none
 
+
     frontend range2
-      bind 2001:48d0:3001:11a::800:2881 ssl crt /etc/ssl/private/cert.pem
-      mode http
-      option httplog
-      maxconn 100000
+        bind 2001:48d0:3001:11a::800:2881 ssl crt /etc/ssl/private/cert.pem
+        mode http
+        option httplog
 
-      acl choose_srv1 rand(100) lt 50 # ~50%
-      acl choose_srv2 rand(100) ge 50 # ~50%
+        http-request set-var(req.backend_name) str(backendrange2)
+        http-request lua.random_redirect
+        http-request redirect location https://%[var(req.target_host)]%[path]%[query] code 307 if { var(req.target_host) -m found }
 
-      http-request redirect location https://red-xfer7-mv1.unl.edu:1094%[path]%[query] code 307 if choose_srv1
-      http-request redirect location https://red-xfer8-mv1.unl.edu:1094%[path]%[query] code 307 if choose_srv2
+    backend backendrange2
+        mode http
+        option tcp-check
+        server red-xfer7-mv1.unl.edu:1094 red-xfer7-mv1.unl.edu:1094 check ssl verify none
+        server red-xfer8-mv1.unl.edu:1094 red-xfer8-mv1.unl.edu:1094 check ssl verify none
+
 
     frontend range3
-      bind 2001:48d0:3001:11a::800:2882 ssl crt /etc/ssl/private/cert.pem
-      mode http
-      option httplog
-      maxconn 100000
+        bind 2001:48d0:3001:11a::800:2882 ssl crt /etc/ssl/private/cert.pem
+        mode http
+        option httplog
 
-      acl choose_srv1 rand(100) lt 50 # ~50%
-      acl choose_srv2 rand(100) ge 50 # ~50%
+        http-request set-var(req.backend_name) str(backendrange3)
+        http-request lua.random_redirect
+        http-request redirect location https://%[var(req.target_host)]%[path]%[query] code 307 if { var(req.target_host) -m found }
 
-      http-request redirect location https://red-xfer7-mv2.unl.edu:1094%[path]%[query] code 307 if choose_srv1
-      http-request redirect location https://red-xfer8-mv2.unl.edu:1094%[path]%[query] code 307 if choose_srv2
+    backend backendrange3
+        mode http
+        option tcp-check
+        server red-xfer7-mv2.unl.edu:1094 red-xfer7-mv2.unl.edu:1094 check ssl verify none
+        server red-xfer8-mv2.unl.edu:1094 red-xfer8-mv2.unl.edu:1094 check ssl verify none
+
   random-redirect.lua: |
     core.register_action("random_redirect", { "http-req" }, function(txn)
         local be_name = txn:get_var("req.backend_name")
