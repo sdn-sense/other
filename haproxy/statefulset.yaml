@@ -1,3 +1,5 @@
+# WARNING. USE IT AT YOUR OWN RISK!
+---
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -50,7 +52,13 @@ data:
 
         http-request set-var(req.backend_name) str(backendrange1)
         http-request lua.random_redirect
-        http-request redirect location https://%[var(req.target_host)]%[path]%[query] code 307 if { var(req.target_host) -m found }
+
+        # Set prefix if token is found
+        http-request set-var(req.redirect_prefix) str(?authz=Bearer%20) if { var(req.auth_token) -m found } !{ query -m found }
+        http-request set-var(req.redirect_prefix) str(&authz=Bearer%20) if { var(req.auth_token) -m found } { query -m found }
+
+        http-request redirect location https://%[var(req.target_host)]%[path]%[query]%[var(req.redirect_prefix)]%[var(req.auth_token)] code 307 if { var(req.target_host) -m found }
+
 
     backend backendrange1
         mode http
@@ -66,7 +74,12 @@ data:
 
         http-request set-var(req.backend_name) str(backendrange2)
         http-request lua.random_redirect
-        http-request redirect location https://%[var(req.target_host)]%[path]%[query] code 307 if { var(req.target_host) -m found }
+
+        # Set prefix if token is found
+        http-request set-var(req.redirect_prefix) str(?authz=Bearer%20) if { var(req.auth_token) -m found } !{ query -m found }
+        http-request set-var(req.redirect_prefix) str(&authz=Bearer%20) if { var(req.auth_token) -m found } { query -m found }
+
+        http-request redirect location https://%[var(req.target_host)]%[path]%[query]%[var(req.redirect_prefix)]%[var(req.auth_token)] code 307 if { var(req.target_host) -m found }
 
     backend backendrange2
         mode http
@@ -82,7 +95,12 @@ data:
 
         http-request set-var(req.backend_name) str(backendrange3)
         http-request lua.random_redirect
-        http-request redirect location https://%[var(req.target_host)]%[path]%[query] code 307 if { var(req.target_host) -m found }
+
+        # Set prefix if token is found
+        http-request set-var(req.redirect_prefix) str(?authz=Bearer%20) if { var(req.auth_token) -m found } !{ query -m found }
+        http-request set-var(req.redirect_prefix) str(&authz=Bearer%20) if { var(req.auth_token) -m found } { query -m found }
+
+        http-request redirect location https://%[var(req.target_host)]%[path]%[query]%[var(req.redirect_prefix)]%[var(req.auth_token)] code 307 if { var(req.target_host) -m found }
 
     backend backendrange3
         mode http
@@ -104,12 +122,6 @@ data:
 
         for name, srv in pairs(backend.servers) do
             local stats = srv:get_stats()
-            -- Use srv.get_addr will return an IP address.
-            -- This also requires to wrap it in [ ] for IPv6.
-            -- local addr = srv.get_addr and srv:get_addr() or srv.addr
-            -- Because of that, we use srv.get_name which is the server name (same as in the backend)
-            -- In case backend names are not the same as server names, we need use srv:get_addr() to get the IP address.
-            -- and make sure to wrap it in [ ] for IPv6.
             local addr = srv.get_name and srv:get_name() or nil
             txn:Debug(string.format("Lua sees server: %s, status: %s", tostring(addr), tostring(stats.status)))
             if stats.status == "UP" then
@@ -120,6 +132,22 @@ data:
         if #alive > 0 then
             local pick = alive[math.random(#alive)]
             txn:set_var("req.target_host", pick)
+            txn:Debug("Redirecting to " .. pick)
+
+            -- Parse Authorization header
+            local auth_header = txn.http:req_get_headers()["authorization"]
+            if auth_header and auth_header[0] then
+                local auth_value = auth_header[0]
+                -- Extract Bearer token
+                local token = auth_value:match("^Bearer%s+(.+)$")
+                if token then
+                    -- Encode token
+                    local encoded_token = string.gsub(token, "([^%w%-%.%_%~])", function(c)
+                        return string.format("%%%02X", string.byte(c))
+                    end)
+                    txn:set_var("req.auth_token", encoded_token)
+                end
+            end
         else
             txn:Info("No backend servers are UP for backend " .. be_name)
         end
