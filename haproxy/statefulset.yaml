@@ -54,8 +54,8 @@ data:
         http-request lua.random_redirect
 
         # Set prefix if token is found
-        http-request set-var(req.redirect_prefix) str(?authz=Bearer%20) if { var(req.auth_token) -m found } !{ query -m found }
-        http-request set-var(req.redirect_prefix) str(&authz=Bearer%20) if { var(req.auth_token) -m found } { query -m found }
+        http-request set-var(req.redirect_prefix) str(?authz=) if { var(req.auth_token) -m found } !{ query -m found }
+        http-request set-var(req.redirect_prefix) str(&authz=) if { var(req.auth_token) -m found } { query -m found }
 
         http-request redirect location https://%[var(req.target_host)]%[path]%[query]%[var(req.redirect_prefix)]%[var(req.auth_token)] code 307 if { var(req.target_host) -m found }
 
@@ -76,8 +76,8 @@ data:
         http-request lua.random_redirect
 
         # Set prefix if token is found
-        http-request set-var(req.redirect_prefix) str(?authz=Bearer%20) if { var(req.auth_token) -m found } !{ query -m found }
-        http-request set-var(req.redirect_prefix) str(&authz=Bearer%20) if { var(req.auth_token) -m found } { query -m found }
+        http-request set-var(req.redirect_prefix) str(?authz=) if { var(req.auth_token) -m found } !{ query -m found }
+        http-request set-var(req.redirect_prefix) str(&authz=) if { var(req.auth_token) -m found } { query -m found }
 
         http-request redirect location https://%[var(req.target_host)]%[path]%[query]%[var(req.redirect_prefix)]%[var(req.auth_token)] code 307 if { var(req.target_host) -m found }
 
@@ -97,8 +97,8 @@ data:
         http-request lua.random_redirect
 
         # Set prefix if token is found
-        http-request set-var(req.redirect_prefix) str(?authz=Bearer%20) if { var(req.auth_token) -m found } !{ query -m found }
-        http-request set-var(req.redirect_prefix) str(&authz=Bearer%20) if { var(req.auth_token) -m found } { query -m found }
+        http-request set-var(req.redirect_prefix) str(?authz=) if { var(req.auth_token) -m found } !{ query -m found }
+        http-request set-var(req.redirect_prefix) str(&authz=) if { var(req.auth_token) -m found } { query -m found }
 
         http-request redirect location https://%[var(req.target_host)]%[path]%[query]%[var(req.redirect_prefix)]%[var(req.auth_token)] code 307 if { var(req.target_host) -m found }
 
@@ -107,6 +107,28 @@ data:
         option tcp-check
         server red-xfer7-mv2.unl.edu:1094 red-xfer7-mv2.unl.edu:1094 check ssl verify none
         server red-xfer8-mv2.unl.edu:1094 red-xfer8-mv2.unl.edu:1094 check ssl verify none
+
+    frontend range4
+        bind 2001:48d0:3001:11a::800:2883 ssl crt /etc/ssl/private/cert.pem
+        mode http
+        option httplog
+
+        http-request set-var(req.backend_name) str(backendrange4)
+        http-request lua.random_redirect
+
+        # Set prefix if token is found
+        http-request set-var(req.redirect_prefix) str(?authz=) if { var(req.auth_token) -m found } !{ query -m found }
+        http-request set-var(req.redirect_prefix) str(&authz=) if { var(req.auth_token) -m found } { query -m found }
+
+        http-request redirect location https://%[var(req.target_host)]%[path]%[query]%[var(req.redirect_prefix)]%[var(req.auth_token)] code 307 if { var(req.target_host) -m found }
+
+    backend backendrange4
+        mode http
+        option tcp-check
+        server cmssense3-origin-2841-1.fnal.gov:2880 cmssense3-origin-2841-1.fnal.gov:2880 check ssl verify none
+        server cmssense2-origin-2841-1.fnal.gov:2880 cmssense2-origin-2841-1.fnal.gov:2880 check ssl verify none
+
+
 
   random-redirect.lua: |
     core.register_action("random_redirect", { "http-req" }, function(txn)
