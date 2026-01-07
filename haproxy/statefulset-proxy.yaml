@@ -1,0 +1,113 @@
+# WARNING. USE IT AT YOUR OWN RISK!
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: haproxy-config
+  namespace: iri
+data:
+  haproxy.cfg: |
+    global
+        log stdout format raw local0 debug
+        maxconn     4000
+        user        haproxy
+        group       haproxy
+        stats socket /var/lib/haproxy/stats
+
+    defaults
+        mode                    tcp
+        log                     global
+        option                  tcplog
+        option                  dontlognull
+        retries                 3
+        timeout connect         10s
+        timeout client          1h
+        timeout server          1h
+        maxconn                 3000
+
+    listen stats
+        bind :::1024
+        mode http
+        stats enable
+        stats hide-version
+        stats uri /haproxy_stats
+        stats realm HAProxy\ Statistics
+
+    frontend rangeunl
+        bind 2001:48d0:3001:11a::800:2880
+        mode tcp
+        option tcplog
+        default_backend backendrangeunl
+
+    backend backendrangeunl
+        mode tcp
+        option tcp-check
+        server red-xfer7-mv0.unl.edu:1094 red-xfer7-mv0.unl.edu:1094 check
+        server red-xfer8-mv0.unl.edu:1094 red-xfer8-mv0.unl.edu:1094 check
+
+    frontend rangefnal
+        bind 2001:48d0:3001:11a::800:2883
+        mode tcp
+        option tcplog
+        default_backend backendrangefnal
+
+    backend backendrangefnal
+        mode tcp
+        option tcp-check
+        server cmssense3-origin-2841-1.fnal.gov:2880 cmssense3-origin-2841-1.fnal.gov:2880 check
+        server cmssense2-origin-2841-1.fnal.gov:2880 cmssense2-origin-2841-1.fnal.gov:2880 check
+
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: haproxy-ipv6
+  namespace: iri
+spec:
+  replicas: 1
+  serviceName: haproxy-ipv6
+  selector:
+    matchLabels:
+      app: haproxy-ipv6
+  template:
+    metadata:
+      labels:
+        app: haproxy-ipv6
+      annotations:
+        k8s.v1.cni.cncf.io/networks: '[{"gateway":["2001:48d0:3001:11a::1"],"ips":["2001:48d0:3001:11a::800/64"], "mac": "1a:36:6f:35:5d:90", "name":"multus11a"}]'
+    spec:
+      tolerations:
+      - effect: NoSchedule
+        key: nautilus.io/reservation
+        operator: Exists
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              - key: kubernetes.io/hostname
+                operator: In
+                values:
+                  - k8s-gen5-01.sdsc.optiputer.net
+                  - k8s-gen5-02.sdsc.optiputer.net
+      containers:
+        - name: haproxy
+          image: haproxy:2.9
+          args: ["-f", "/usr/local/etc/haproxy/haproxy.cfg"]
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "4"
+              memory: "4Gi"
+          volumeMounts:
+            - name: haproxy-config
+              mountPath: /usr/local/etc/haproxy/
+          ports:
+            - containerPort: 1024
+              protocol: TCP
+      volumes:
+        - name: haproxy-config
+          configMap:
+            name: haproxy-config
